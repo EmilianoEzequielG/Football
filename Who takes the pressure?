@@ -1,0 +1,128 @@
+
+#########################
+#### UNDER PRESSURES ####
+#########################
+
+### load packages !
+
+library(tidyverse)
+library(ggrepel)
+library(ggimage)
+library(readr)
+library(nflfastR)
+library(showtext)
+
+### load data ! (data: PFF)
+passing_allowed_pressure <- read_csv("C:/Users/Administrador/Downloads/passing_allowed_pressure.csv")
+
+line_pass_blocking_efficiency <- read_csv("C:/Users/Administrador/Downloads/line_pass_blocking_efficiency.csv") %>%
+  select(team_name, pbe, pressures_allowed, sacks_allowed, hurries_allowed,hits_allowed) %>%
+  mutate(pain = sacks_allowed + hurries_allowed + hits_allowed)
+
+
+## Selects Teams Wordmark
+team_word <- teams_colors_logos %>%
+  select(team_abbr, team_wordmark)
+
+
+data <- passing_allowed_pressure %>%
+  select(player, team_name, sacks_allowed ,allowed_pressure_dropbacks,hits_allowed, hurries_allowed, other_percent ,ol_te_percent ,self_percent, lt_percent, lg_percent, ce_percent, rg_percent,rt_percent,te_percent) %>%
+  filter(allowed_pressure_dropbacks > 10) %>% ## "I don't think a QB who has been pressured in a few snaps is representative"
+  group_by(team_name) %>%
+  summarise(QB = mean(self_percent), 
+            LT = mean(lt_percent),
+            LG = mean(lg_percent), 
+            C = mean(ce_percent), 
+            RG = mean(rg_percent), 
+            RT = mean(rt_percent), 
+            TE = mean(te_percent),
+            Others = mean(other_percent)) %>%
+  mutate(Total = QB + LT +LG + C + RG + RT +TE + Others,  ## "In some cases, the total of percent is over or above 100%, so I recalculate it"
+         QB = QB/Total*100, 
+         LT = LT/Total*100, 
+         LG = LG/Total*100,
+         C  = C/Total*100,
+         RG = RG/Total*100,
+         RT = RT/Total*100,
+         TE = TE/Total*100, 
+         Others = Others/Total*100, 
+         Check = QB + LT + LG + C + RG + RT + TE + Others) %>% #OK.
+  select(team_name,QB,LT,LG,C,RG,RT,TE,Others) %>%
+  pivot_longer(cols = c(QB,LT,LG,C,RG,RT,TE,Others), names_to = "Value") %>%
+  left_join(line_pass_blocking_efficiency, by = c("team_name")) %>%
+  mutate( y = case_when(
+    Value == "LT" | Value == "LG" | Value == "C" |Value == "RG" |Value == "RT" ~ 0,  
+    Value == "QB" ~ 1.5,
+    Value == "Others" ~ 0.75,
+    Value == "TE" ~ 0.4,
+  ), 
+         x = case_when(
+           Value == "QB" | Value == "C" ~ 0, 
+           Value == "LG" ~ -0.8, 
+           Value == "LT" ~ -1.6, 
+           Value == "RG" ~  0.8, 
+           Value == "RT" ~  1.6,
+           Value == "Others" ~ -0.65,
+           Value == "TE" ~ 2.5
+         ), ## X & Y are the coordinates for the graph
+  posteam = case_when(
+    team_name == "ARZ" ~ "ARI", 
+    team_name == "BLT" ~ "BAL",
+    team_name == "CLV" ~ "CLE",
+    team_name == "HST" ~ "HOU",
+    T ~ team_name
+  ), 
+  size = ifelse(Value == "QB", pain/10, 7), 
+  pbe = paste0("EFF= ", pbe)) %>%
+  left_join(team_word, by = c("posteam" = "team_abbr")) %>%
+  arrange(posteam)
+
+head(data
+
+cor(line_pass_blocking_efficiency$pbe, line_pass_blocking_efficiency$pressures_allowed)
+
+# The correlation is -0.77, so the more EFF the less pressure received by the QB. I summarize the pressures with this Stat.
+
+The
+
+
+### GRAPH ####
+
+ggplot(data, aes(x, y,)) +
+  geom_hline(yintercept = 0, colour = "#010a4d", alpha = 0.2) +
+  geom_vline(xintercept = -0.8, colour = "#9a9a9c", alpha = 0.3, linetype = "dashed", size = 1.3) + 
+  geom_vline(xintercept = 0.8, colour = "#9a9a9c", alpha = 0.3, linetype = "dashed", size = 1.3) + 
+  geom_point( aes(colour = value), size = data$size, alpha = 0.6) + 
+  scale_color_gradient(low = "grey", high = "red", na.value = NA) + 
+  xlim(c(-3,3)) +
+  ylim(c(-0.5,3.5)) +
+  geom_image(aes(x = 0, y = 3, image = team_wordmark), size = 0.5, asp = 16/9) + 
+  geom_text(aes(x = -2.5, y = -0.25, label = pbe), size = 3,fontface = "bold", color = "black") + 
+  labs(
+    x = " ", 
+    y = " ", 
+    title = "Under Pressure",
+    subtitle = "¿Quien es el responsable de tomar la presión?. 
+    Tamaño de QB: QbsHits + Hurries + Pressures + Sacks.
+    EFF = Eficiencia frente a la presión..",
+    color='Grado de presión permitida',
+    caption= "Datos: @PFF & @NflFastR | Autor: Emiliano Guisamonde."
+  ) +
+  facet_wrap(~posteam)  +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, colour = "#610032",size = 1.07)+
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, colour = "#610032", size = 1.07) + 
+  theme(panel.background = element_rect(fill = "#c6ffb0", colour = "#c6ffb0"),
+        plot.background = element_rect(fill = "#f1f2f0"),
+        panel.grid.major = element_line(colour = "#c6ffb0"),
+        panel.grid.minor = element_line(colour = "#c6ffb0"),
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        strip.text = element_blank(), 
+        axis.text = element_blank(),
+        axis.ticks = element_blank(), 
+        legend.text = element_text(face= "bold"),
+        legend.background = element_rect(fill = "#f1f2f0"),
+        legend.position = "bottom", 
+        plot.title = element_text(size = 20,family = 'Anton', face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "italic", hjust = 0.5),
+        plot.caption = element_text(size = 10, face = "italic", hjust = 0.5))
