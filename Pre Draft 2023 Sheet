@@ -1,0 +1,183 @@
+library(tidyverse)
+library(gt)
+library(readxl)
+library(nflreadr)
+library(nflfastR)
+library(gtExtras)
+library(gtsummary)
+library(reshape2)
+library(webshot2)
+
+### Draft Values
+
+draft_values <- read_csv("https://raw.githubusercontent.com/leesharpe/nfldata/master/data/draft_values.csv")
+
+DraftOrder <- read_excel("C:/xxxx/xxxxx/xxxxxx/DraftOrder.xlsx", sheet = "Hoja1") 
+head(DraftOrder)
+
+combine_word <- function(name, team, wl){
+  glue::glue(
+    "<div style='line-height:20px;font-family: Playfair Display;'><span style='font-weight:bold;font-variant:small-caps;font-size:30px'>{substr(name,1,1)}</span><em><span style='font-size:15px'>{substr(name,2,20)}</span></em></div>
+     <div style='line-height:20px;font-family: Playfair Display;'><span style='font-weight:bold;font-variant:small-caps;font-size:30px'>{substr(team,1,1)}</span><em><span style='font-size:15px'>{substr(team,2,20)}</span></em></div>
+     <div style='line-height:20px;font-family: Playfair Display;'><span style='font-weight:bold;font-variant:small-caps;font-size:30px'>{substr(wl,1,1)}</span><em><span style='font-size:15px'>{substr(wl,2,20)}</span></em></div>"
+  )
+}
+
+
+
+Df <- DraftOrder %>% 
+  mutate(round = case_when(
+    Pick < 32 ~ "1°Ronda",
+    Pick >= 32 & Pick < 64 ~ "2°Ronda",
+    Pick >= 64 & Pick < 103 ~ "3°Ronda",
+    Pick >= 103 & Pick < 136 ~ "4°Ronda",
+    Pick >= 136 & Pick < 178 ~ "5°Ronda",
+    Pick >= 178 & Pick < 218 ~ "6°Ronda",
+    Pick >= 218 ~ "7°Ronda"
+  )) %>% 
+  select(Team, round, Pick) %>% 
+  pivot_wider(names_from = round, values_from = Pick, values_fn = list)  %>%
+  left_join(DraftOrder %>% 
+              left_join(draft_values, 
+                        by = c("Pick" = "pick")) %>% 
+              group_by(Team) %>% 
+              summarize(n = n(),
+                        Draft_Capital = sum(otc)), 
+            by = c("Team")) %>%
+  left_join(teams_colors_logos %>% 
+              select(team_abbr, team_name, team_wordmark), 
+           by = c("Team" = "team_abbr")) %>% 
+  separate(team_name,c("City","Nick", "Nick2") ,sep  = " ") %>% 
+  mutate(Nick2 = ifelse(is.na(Nick2)," ", Nick2),
+         team_name = combine_word(City, Nick, Nick2), 
+         team_name = map(team_name, gt::html)) %>%
+  select(team_wordmark, Team,team_name ,`1°Ronda`, `2°Ronda`, `3°Ronda`, `4°Ronda`, `5°Ronda`, `6°Ronda`, `7°Ronda`, n, Draft_Capital)
+  
+head(Df)
+
+table <- Df %>% 
+  arrange(-Draft_Capital) %>% 
+  tibble() %>% 
+  gt() %>% 
+    tab_header(
+      title = md("**DRAFT SHEET**"),
+      subtitle = md("Resumen")
+  )%>%
+  opt_align_table_header('left') %>% 
+  tab_style(locations = cells_title(groups = 'title'),
+            style = list(
+              cell_text(
+                font = google_font(name = 'Abril Fatface'),
+                size   = px(45),
+                weight = 'bold',
+                align  = 'center',
+                color  = '#dde2e9'
+              ),
+              cell_fill(color = '#15161c'))) %>% 
+  tab_style(locations = cells_title(groups = 'subtitle'),
+            style = list(
+              cell_text(
+                font  = google_font(name = 'Merriweather'),
+                size  = 'small',
+                align = 'center',
+                color = '#dde2e9'
+              ),
+              cell_fill(color = '#15161c'))) %>% 
+  tab_style(locations = cells_column_labels(),
+            style = list(
+              cell_text(
+                font  = google_font(name = 'Merriweather'),
+                size  = 'small',
+                align = 'center',
+                color = '#dde2e9'
+              ),
+              cell_fill(color = "#0d4b8d"))) %>% 
+  tab_options(
+    table.border.top.color = "#0161ef",
+    column_labels.border.bottom.color = "#0161ef",
+    column_labels.border.bottom.width= px(3)
+    ) %>% 
+  cols_label(
+    team_wordmark = md(" "),
+    team_name = md(" "),
+    `1°Ronda`          = md('1°Ronda'),
+    `2°Ronda`               = md('2°Ronda'),
+    `3°Ronda`       = md('3°Ronda'),
+    `4°Ronda`     = md('4°Ronda'),
+    `5°Ronda`          = md('5°Ronda'),
+    `6°Ronda`          = md('6°Ronda'),
+    `7°Ronda`    = md('7°Ronda'),
+    n = md('N°Picks'),
+    Draft_Capital = md("Capital de Draft")
+  ) %>% 
+  cols_align('center',
+             columns = c(
+               'n','Draft_Capital')
+  ) %>%
+  tab_spanner(
+    label = "Franquicia",
+    columns = c(team_wordmark, team_name)
+  ) %>% 
+  tab_spanner(
+    label = "Picks",
+    columns = c(`1°Ronda`, `2°Ronda`, `3°Ronda`, `4°Ronda`, `5°Ronda`, `6°Ronda`, `7°Ronda`)  
+    ) %>% 
+  tab_style(
+    style = list(
+      cell_text(
+        font  = google_font(name = 'Merriweather'),
+        size  = 'small',
+        align = 'center',
+        color = '#dde2e9'
+      ), 
+      cell_fill(color = "#0d4b8d")
+    ),
+    locations = list(
+      cells_column_spanners(spanners = c("Picks","Franquicia")))
+    ) %>% 
+  tab_style(
+    style = 
+      list(
+        cell_text(color = "#000000", font = google_font(name = "Bebas Neue"),size  = px(22),align = 'center'),
+        cell_fill(color = "#dde2e9", alpha = 0.5)),
+    locations = cells_body(row = everything())
+  ) %>% 
+  text_transform(
+    locations = cells_body(columns = team_wordmark),
+    fn = function(x) {
+      web_image(
+        url = x,
+        height = px(25)
+      )
+    }
+  )  %>% 
+  cols_hide(c(Team)) %>% 
+  tab_source_note(
+    source_note = html(
+      "<div><br>Datos: @nflfastR & OverTheCap | Autor:@nflnohuddle </br></div>")
+  ) %>%
+  
+  tab_footnote(cells_column_labels(columns = Draft_Capital), 
+               footnote = 'Valor total de selecciones de Draft medido por OTC.') %>% 
+  tab_style(locations = cells_footnotes(),
+            style = list(cell_text(
+              font  = google_font(name = 'Raleway'),
+              size  = 'small',
+              align = 'center', 
+              color = '#666666'
+            )))%>% 
+  tab_options(
+    data_row.padding                  = px(8),
+    table.border.top.style            = "hidden",
+    table.border.bottom.style         = "hidden",
+    table_body.border.top.style       = "solid",
+    column_labels.border.bottom.style = "solid"
+  )
+
+
+table
+
+getwd() 
+gt::gtsave(table, 'tabla1.png', 
+           vwidth = 2000, vheight = 3000)
+   
