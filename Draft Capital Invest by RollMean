@@ -1,0 +1,144 @@
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+library(gghighlight)
+library(ggimage)
+library(zoo)
+
+
+
+draft_values <- read_csv("https://raw.githubusercontent.com/leesharpe/nfldata/master/data/draft_values.csv")
+View(draft_values)
+
+players <- load_depth_charts(2005:2022) %>%
+  select(season, club_code, position, full_name) %>%
+  distinct(full_name, .keep_all = T) %>%
+  mutate(club_code = case_when(
+    club_code == "STL" ~ "LA", 
+    club_code == "OAK" ~ "LV",
+    club_code == "SD" ~ "LAC",
+    T ~ club_code
+  ),)
+
+equipos <- load_draft_picks() %>%
+  filter(season >= 2005) %>%
+  arrange(season,pick) %>% 
+  select(season,team) %>% 
+  mutate(team = case_when(
+    team == "SFO"~"SF",
+    team == "TAM"~"TB",
+    team == "SDG"~"LAC",
+    team == "NOR"~"NO",
+    team == "KAN"~"KC",
+    team == "STL"~"LA",
+    team == "OAK"~"LV",
+    team == "GNB"~"GB",
+    team == "NWE"~"NE",
+    team == "LVR"~"LV",
+    team == "OAK"~"LV",
+    team == "LAR"~"LA",
+    T ~ team
+  )) %>% 
+  distinct(team)
+
+position <- load_draft_picks() %>%
+  select(season,position) %>% 
+  filter(season >= 2005) %>%
+  mutate(
+      position = case_when(
+        position == "T" | position == "C" | position == "OT" | position == "G" ~ "OL", 
+        position == "LS" | position == "K" | position == "P" ~ "ST", 
+        position == "ILB" | position == "OLB"  ~ "LB",
+        position == "DT" | position == "NT"  ~ "DL", 
+        position == "CB" | position == "S" | position == "SAF" ~ "DB",
+          T ~position
+        )) %>% 
+  distinct(position)
+
+unique(position$position)
+
+años <- c(2005:2022)
+
+grid <- expand.grid(team = equipos$team, season = años, position = position$position) %>% 
+  left_join(load_draft_picks() %>% 
+            filter(season >= 2005) %>%
+            left_join(draft_values %>% 
+              select(pick, johnson), 
+              by = c("pick" = "pick")) %>% 
+            arrange(season,pick) %>% 
+            select(season,team, pick, pfr_player_name, johnson, position, category) %>% 
+            mutate(team = case_when(
+                    team == "SFO"~"SF",
+                    team == "TAM"~"TB",
+                    team == "SDG"~"LAC",
+                    team == "NOR"~"NO",
+                    team == "KAN"~"KC",
+                    team == "STL"~"LA",
+                    team == "OAK"~"LV",
+                    team == "GNB"~"GB",
+                    team == "NWE"~"NE",
+                    team == "LVR"~"LV",
+                    team == "OAK"~"LV",
+                    team == "LAR"~"LA",
+                       T ~ team
+                    ), 
+                  position = case_when(
+                    position == "T" | position == "C" | position == "OT" | position == "G" ~ "OL", 
+                    position == "LS" | position == "K" | position == "P" ~ "ST", 
+                    position == "ILB" | position == "OLB"  ~ "LB",
+                    position == "DT" | position == "NT"  ~ "DL", 
+                    position == "CB" | position == "S" | position == "SAF" ~ "DB",
+                      T ~position
+                    )) %>% 
+            filter(position != "FB"),
+              by = c("team", "season", "position")) %>% 
+  mutate(johnson = ifelse(is.na(johnson), 0, johnson)) %>%
+  group_by(team, season, position) %>%
+  summarize(draft_capital = sum(johnson)) %>%
+  ungroup() %>%
+  group_by(team, position) %>% 
+  mutate(rollmean_2 = rollmean(draft_capital, k = 2, fill = NA,align = "right"), 
+         rollmean_3 = rollmean(draft_capital, k = 3, fill = NA,align = "right")) %>% 
+  arrange(team, season, position)
+  
+  
+WR_comp <- grid %>% 
+  filter(position == "DL") %>% 
+  arrange(team) %>% 
+  left_join(teams_colors_logos %>% 
+              select(team_abbr, team_color, team_wordmark), 
+            by = c("team" = "team_abbr"))
+
+color <- WR_comp %>% 
+  distinct(team, team_color)
+
+
+head(WR_comp)
+
+ggplot(WR_comp, aes(x = season, y = rollmean_3, color = team)) + 
+  geom_line(size = 1) +
+  scale_color_manual(values = color$team_color) +
+  labs(title = "Inversion en DL", 
+       subtitle = "Media Movil de 3 años de Draft Capital OTC", 
+       y = "Draft Capital",
+       x = "Season", 
+       caption = "Data: @NFLFastR | Author = xxxxx) + 
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("#ebedeb", 1))) +
+  facet_wrap(~team) + 
+  theme_bw() + 
+  theme(     plot.background = element_rect(fill = "#ffffff"), 
+             panel.border = element_blank(),
+             panel.background = element_rect(fill = "#ffffff"), 
+             strip.background = element_rect(fill = '#dde2e9'),
+             panel.grid = element_blank(), 
+             strip.text.x = element_text(color = "#000000", face = "bold", size = 10, hjust = 0.5),
+             panel.grid.major.y = element_blank(), 
+             plot.subtitle = element_text(color = "#000000", face = "italic", size = 10, hjust = 0.5),
+             plot.title = element_text(color = "#000000", face = "bold", size = 20, hjust = 0.5),
+             plot.caption = element_text(color = "#000000", face = "italic", size = 10, hjust = 0.85),
+             axis.text.y = element_text(size = 7, color = "#000000"), 
+             axis.text.x = element_text(size = 7, color = "#000000"), 
+             axis.title.y =  element_text(size = 15, color = "#000000", face = "bold"),
+             axis.title.x =  element_text(size = 15, color = "#000000", face = "bold"), 
+             legend.position = "none")
