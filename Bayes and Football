@@ -1,0 +1,72 @@
+library(nflreadr)
+library(tidyverse)
+library(nflfastR)
+
+
+
+QB <- load_pbp(2022) %>%  
+  group_by(passer_player_name) %>%
+  summarise(n = n()) %>%
+  filter(n > 200, !passer_player_name %in% c("J.Flacco", "M.Ryan", "T.Brady"))
+
+# Tom Brady, Matt Ryan and J.Flacco have just Retired. 
+
+pbp <- load_pbp(2022) %>% 
+  filter(!is.na(epa), !is.na(passer_player_name), passer_player_name %in% QB$passer_player_name, 
+         pass_attempt == 1, season_type == "REG", air_yards <= 15, air_yards >= 0) 
+
+# I suppose that the Prior Probability that a QB complete a short pass (air yards below 15 yards) is 50%. So, if we suppose and SD as +/- 25% the Beta Prior is Beta(2,2). 
+
+df <- pbp %>%
+  group_by(passer_player_name) %>%
+  mutate(cp = cumsum(complete_pass), 
+         n = row_number(), 
+         dif = n - cp,
+         alfa = 2+cp, 
+         beta = 2+dif, 
+         prob = alfa/(alfa+beta)) %>%
+  filter(n > 200) %>% 
+  select(posteam, week,passer_player_name, complete_pass,n,cp, alfa, beta, prob)
+
+
+QB_dist <- tibble(
+  QB = unique(df$passer_player_name),
+) %>% 
+  left_join(df %>% 
+              group_by(passer_player_name) %>% 
+              summarise(alpha = last(alfa), 
+                        beta = last(beta),
+                        prob = alpha/(beta+alpha)), 
+            by = c("QB" = "passer_player_name"))
+
+unique(QB_dist$QB)
+
+n_sim <- 100000
+
+gg <- tibble(
+  id = 1:n_sim,
+  J.Allen = rbeta(n_sim, subset(QB_dist, QB == "J.Allen")$alpha, subset(QB_dist, QB == "J.Allen")$beta), 
+  P.Mahomes = rbeta(n_sim, subset(QB_dist, QB == "P.Mahomes")$alpha, subset(QB_dist, QB == "P.Mahomes")$beta),
+  T.Lawrence = rbeta(n_sim, subset(QB_dist, QB == "T.Lawrence")$alpha, subset(QB_dist, QB == "T.Lawrence")$beta),
+  J.Burrow = rbeta(n_sim, subset(QB_dist, QB == "J.Burrow")$alpha, subset(QB_dist, QB == "J.Burrow")$beta),
+  J.Herbert = rbeta(n_sim, subset(QB_dist, QB == "J.Herbert")$alpha, subset(QB_dist, QB == "J.Herbert")$beta),
+  K.Cousins = rbeta(n_sim, subset(QB_dist, QB == "K.Cousins")$alpha, subset(QB_dist, QB == "K.Cousins")$beta),
+  A.Rodgers = rbeta(n_sim, subset(QB_dist, QB == "A.Rodgers")$alpha, subset(QB_dist, QB == "A.Rodgers")$beta)
+) %>% 
+  pivot_longer(!id,names_to = "QB", values_to = "Sim") 
+  
+
+head(gg)
+
+head(gg)
+
+
+library(ggridges)
+
+# Comparission Josh Allen, P.Mahomes, T.Lawrence, J.Burrow, J.Herbert, K.Cousins, A.Rodgers.
+
+ggplot(gg, aes(x = Sim, y = QB, fill = QB)) +
+  geom_density_ridges(scale = 3, rel_min_height = 0.01, alpha = 0.75) +
+  scale_fill_manual(values = c("#203731","#00338D", "#FB4F14", "#0080C6","#4F2683","#E31837", "#006778"))+
+  theme_bw()
+  
