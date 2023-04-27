@@ -154,7 +154,7 @@ table <- Df %>%
   cols_hide(c(Team)) %>% 
   tab_source_note(
     source_note = html(
-      "<div><br>Datos: @nflfastR & OverTheCap | Autor:@nflnohuddle </br></div>")
+      "<div><br>Datos: @nflfastR & OverTheCap | Autor:@xxxxxxx </br></div>")
   ) %>%
   
   tab_footnote(cells_column_labels(columns = Draft_Capital), 
