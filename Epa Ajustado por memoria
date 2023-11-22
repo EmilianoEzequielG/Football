@@ -1,0 +1,125 @@
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+library(nflplotR)
+
+
+sch <- load_schedules(2023) %>%
+  filter(week == 4, !is.na(result)) %>%
+  select(home_team, away_team, result)
+
+matchs <- sch %>% 
+  rename(equipo = home_team, 
+         rival = away_team) %>%
+  mutate(win = case_when(
+    result > 0 ~ 1, 
+    result == 0 ~ 0, 
+    T ~ 0
+  )) %>% 
+  bind_rows(sch %>% 
+              rename(equipo = away_team, 
+                     rival = home_team)  %>% 
+  mutate(result = -result,
+    win = case_when(
+    result > 0 ~ 1, 
+    result == 0 ~ 0, 
+    T ~ 0
+  )))  %>% 
+  left_join(load_pbp(2022:2023) %>% 
+              filter(!is.na(posteam), !is.na(defteam), !is.na(epa), season_type == "REG") %>% 
+              select(defteam, epa, season, week, game_date) %>% 
+              mutate(id = case_when(
+                season == 2022 & week >= 13 ~ 1, 
+                season == 2023 & week <= 3 ~ 1, 
+                T ~ 0
+              ), 
+              game_date = as.Date(game_date)) %>% 
+              filter(id == 1) %>%  
+              group_by(defteam, game_date) %>% 
+              summarise(epa_def = round(mean(epa),4)) %>%
+              mutate(dif = as.numeric(difftime(as.Date("2023-09-25"), game_date, units = "days")), #Ajusto por dias
+                     ponderacion = round(1/(1 + dif),4), 
+                     epa = epa_def*ponderacion) %>% 
+              group_by(defteam) %>% 
+              summarise(epa_def = sum(epa)), 
+            by = c("rival" = "defteam"))  %>% 
+  left_join(load_pbp(2023) %>% 
+              filter(!is.na(posteam), !is.na(defteam), !is.na(epa), season_type == "REG", week == 4) %>% 
+              select(posteam, epa) %>%
+              group_by(posteam) %>% 
+              summarise(epa_off = round(mean(epa),4)), 
+            by = c("equipo" = "posteam")) %>% 
+  select(equipo, epa_off, rival, epa_def, result, win) %>% 
+  mutate(margin = epa_off - epa_def) %>%
+  arrange(-margin) %>%
+  mutate(colour = ifelse(win == 1, NA, "gray"), 
+         alpha = ifelse(win == 1, 0.85,0.45), 
+         rank = round(rank(epa_def)))
+
+# Ploteo Ranking vs Rival
+ggplot(matchs, aes(reorder(rival,rank), margin)) + 
+  geom_bar(stat = "identity",fill = "red", alpha = 0.75, colour = "black") + 
+  nflplotR::geom_nfl_logos(aes(team_abbr = rival, y = 0, alpha = 0.65), width = 0.075) + 
+  nflplotR::geom_nfl_logos(aes(team_abbr = equipo, y = margin, alpha = 0.85), width = 0.075) +
+  labs(x = " ", 
+       y = "Margin EPA") + 
+  theme_bw()
+
+
+# Ploteo RECORD vs Margin
+ggplot(matchs, aes(result, margin)) + 
+  nflplotR::geom_nfl_logos(aes(team_abbr = equipo, alpha = alpha), width = 0.075) + 
+  labs(x = "Diferencia Puntos", 
+       y = "Margin Epa") + 
+  geom_hline(yintercept = 0, color = "black", alpha = 0.65, linetype = "dashed") + 
+  theme_bw()
+
+
+
+df <- matchs %>% 
+  filter(win == 1) %>%
+  select(equipo, rival, margin, epa_def) %>%
+  left_join(teams_colors_logos %>% 
+              filter(!team_abbr %in% c("OAK", "SD", "LAR", "STL")) %>%
+              select(team_abbr, team_wordmark, team_color), 
+            by = c("equipo" = "team_abbr")) %>%
+  mutate(rank = round(rank(epa_def))) %>%
+  arrange(-rank)
+
+
+
+ggplot(df, aes(reorder(rival,rank), margin)) + 
+  geom_bar(stat = "identity",fill = df$team_color, alpha = 0.75, colour = "black") + 
+  nflplotR::geom_nfl_logos(aes(team_abbr = rival, y = 0, alpha = 0.65), width = 0.075) + 
+  nflplotR::geom_nfl_logos(aes(team_abbr = equipo, y = margin, alpha = 0.85), width = 0.075) +
+  labs(x = " ", 
+       y = "Margin EPA") + 
+  theme_bw()
+
+###########################################
+
+
+
+load_pbp(2022:2023) %>% 
+  filter(!is.na(posteam), !is.na(defteam), !is.na(epa), season_type == "REG") %>% 
+  select(defteam, epa, season, week, game_date) %>% 
+  mutate(id = case_when(
+    season == 2022 & week >= 13 ~ 1, 
+    season == 2023 & week <= 3 ~ 1, 
+    T ~ 0
+  ), 
+  game_date = as.Date(game_date)) %>% 
+  filter(id == 1) %>%  
+  group_by(defteam, game_date) %>% 
+  summarise(epa_def = round(mean(epa),4)) %>%
+  mutate(dif = as.numeric(difftime(as.Date("2023-09-25"), game_date, units = "days")), 
+         ponderacion = round(1/(1 + dif),4), 
+         epa = epa_def*ponderacion)
+  group_by(defteam) %>% 
+  summarise(epa = sum(epa))
+  left_join(load_pbp(2023) %>% 
+              filter(!is.na(posteam), !is.na(defteam), !is.na(epa), season_type == "REG", week == 4) %>% 
+              select(posteam, epa) %>%
+              group_by(posteam) %>% 
+              summarise(epa_off = round(mean(epa),4)), 
+            by = c("defteam" = "posteam"))
