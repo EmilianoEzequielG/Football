@@ -1,0 +1,198 @@
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+library(htmltools)
+library(DT)
+library(gt)
+library(gtsummary)
+library(gtExtras)
+
+
+sche <- load_schedules(2023) %>% 
+  filter(!is.na(result)) %>%
+  select(home_team, away_team, result) %>%
+  mutate(w = case_when(
+    result > 0 ~ 1, 
+    result == 0 ~ 0.5, 
+    T ~ 0
+  )) %>%
+  rename(team = home_team, 
+         rival = away_team) %>% 
+  bind_rows(load_schedules(2023) %>% 
+              filter(!is.na(result)) %>%
+              select(home_team, away_team, result) %>%
+              mutate(
+                result = -result,
+                w = case_when(
+                result > 0 ~ 1, 
+                result == 0 ~ 0.5, 
+                T ~ 0
+              )) %>%
+              rename(team = away_team, 
+                     rival = home_team))
+
+
+pbp <- load_pbp(2023) %>%
+  filter(!is.na(posteam), !is.na(defteam), !is.na(success)) %>%
+  select(week, posteam, defteam, success) %>% 
+  group_by(posteam, defteam) %>%
+  summarise(suc = round(mean(success),4))
+
+
+df <- sche %>% 
+  left_join(pbp %>% 
+              rename(suc_team = suc), 
+            by = c("team" = "posteam", "rival" = "defteam")) %>% 
+  left_join(pbp %>% 
+              rename(suc_rival = suc), 
+            by = c("rival" = "posteam", "team" = "defteam")) %>% 
+  mutate(dif = suc_team - suc_rival, 
+         real_w = ifelse(dif > 0,1,0))
+
+
+combine_word <- function(pct, wl){
+  glue::glue(
+    "<div style='line-height:15px'><span style='font-weight:bold;font-variant:small-caps;font-size:15px'>{pct}</div>
+        <div style='line-height:12px'><span style ='font-weight:bold;color:grey;font-size:10px'>{wl}</span></div>"
+  )
+}
+
+  
+add_cyl_color <- function(diferencia){
+  add_color <- if (diferencia > 0) {
+    "background: hsl(116, 60%, 90%); color: hsl(116, 30%, 25%);"
+  } else if (diferencia == 0) {
+    "background: hsl(230, 70%, 90%); color: hsl(0, 0%, 0%);"
+  } else if (diferencia < 0) {
+    "background: hsl(350, 70%, 90%); color: hsl(350, 45%, 30%);"
+  }
+  div_out <- htmltools::div(
+    style = paste(
+      "display: inline-block; padding: 2px 12px; border-radius: 15px; font-weight: 600; font-size: 12px;",
+      add_color
+    ),
+    paste(diferencia)
+  )
+  
+  as.character(div_out) %>% 
+    gt::html()
+}
+
+
+
+df %>% 
+  filter(team == "CHI")
+
+
+
+
+df %>% 
+  select(team, w) %>%
+  group_by(team, w) %>%
+  summarise(n = n()) %>%
+  mutate(w = case_when(
+    w == 0 ~ "L", 
+    w == 1 ~ "W",
+    T ~ "T"
+  )) %>% 
+  pivot_wider(names_from = w, values_from = n, values_fill = 0) %>%
+  mutate(pct = round(W/(W+L),4)) %>%
+  left_join(
+    df %>% 
+      group_by(team) %>% 
+      summarise(win = sum(w), 
+                real_win = sum(real_w)) %>%
+      mutate(diferencia = win - real_win) %>%
+      arrange(-diferencia) %>% 
+      select(-win), 
+    by = c("team")
+  ) %>% 
+  left_join(
+  teams_colors_logos %>% 
+  filter(!team_abbr %in% c("OAK", "SD", "LAR", "STL")) %>%
+  select(team_abbr, team_wordmark), 
+  by = c("team" = "team_abbr")) %>% 
+  arrange(-diferencia) %>%
+  mutate(pct = paste0(pct*100,"%"), 
+         wl = paste0(W,"-",L), 
+         combo = combine_word(pct,wl),
+         combo = map(combo, gt::html),
+         diferencia = map(diferencia, add_cyl_color)) %>% 
+  select(team_wordmark, combo,real_win,diferencia) %>% 
+  tibble() %>%
+  gt() %>% 
+  tab_header(
+    title = md("<img src= 'https://pbs.twimg.com/profile_images/1649109265280294913/HgMLvMyJ_400x400.png' style='height:80px;'> **Win is a Win** <img src= 'https://pbs.twimg.com/profile_images/1649109265280294913/HgMLvMyJ_400x400.png' style='height:80px;'>"),
+    subtitle = md("Margen de victorias de equipos en comparación a la difencia de exito en sus respectivos partidos.")
+  )%>%
+  opt_align_table_header('left') %>% 
+  tab_style(locations = cells_title(groups = 'title'),
+            style = list(
+              cell_text(
+                font = google_font(name = 'Abril Fatface'),
+                size   = px(45),
+                weight = 'bold',
+                align  = 'center',
+                color  = '#dde2e9'
+              ),
+              cell_fill(color = '#15161c'))) %>% 
+  tab_style(locations = cells_title(groups = 'subtitle'),
+            style = list(
+              cell_text(
+                font  = google_font(name = 'Merriweather'),
+                size  = 'small',
+                align = 'center',
+                color = '#dde2e9'
+              ),
+              cell_fill(color = '#15161c'))) %>% 
+  tab_options(
+    table.border.top.color = "#0161ef",
+    column_labels.border.bottom.color = "#0161ef",
+    column_labels.border.bottom.width= px(3)
+  ) %>% 
+  cols_label(
+    team_wordmark = md(" "),
+    combo = md("Record Actual"), 
+    real_win = md("Actuaciones superadoras"), 
+    diferencia = md("Diferencia")
+  ) %>%
+  gt_theme_538() %>% 
+  cols_align(align = "center", columns = everything()) %>% 
+  text_transform(
+    locations = cells_body(columns = team_wordmark),
+    fn = function(x) {
+      web_image(
+        url = x,
+        height = px(25)
+      )
+    }
+  ) %>% 
+  cols_hide(team) %>% 
+  tab_source_note(
+    source_note = html(
+      "<div><br>Datos: @nflfastR | Autor:Emiliano Guisamonde by @nflnohuddle </br></div>")
+  ) %>%
+  tab_footnote(cells_column_labels(columns = real_win), 
+               footnote = 'Cantidad de partidos que el equipo tuvo un mejor rendimiento que su rival') %>% 
+  tab_footnote(cells_column_labels(columns = diferencia), 
+               footnote = 'Diferencia entre la cantidad de partidos con mejor rendimiento y las victorias efectivas.
+
+              Un valor negativo indica que el equipo obtuvo ese valor de derrotas a pesar de superar a su rival. Por otro lado, un valor positivo señala que el equipo se llevó la victoria a pesar de tener un rendimiento menor que su rival.') %>% 
+  tab_style(locations = cells_footnotes(),
+            style = list(cell_text(
+              font  = google_font(name = 'Raleway'),
+              size  = 'small',
+              align = 'left', 
+              color = '#666666'
+            )))%>%
+  tab_style(
+    style = list(cell_text(align = "left",
+                           font  = google_font(name = 'Raleway'),
+                           color = '#666666', 
+                           size = "small")),
+    locations = cells_source_notes())
+
+
+
+gt::gtsave(table, 'WoW.png', 
+           vwidth = 2000, vheight = 3000)
