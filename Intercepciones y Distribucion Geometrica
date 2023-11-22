@@ -1,0 +1,91 @@
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+
+
+QBs <- pbp %>% 
+  distinct(passer_player_name)
+
+
+df <- load_pbp(2020:2023) %>% 
+  filter(!is.na(passer_player_name), !is.na(passer_player_id), pass_attempt == 1, sack == 0, qb_scramble == 0) %>% 
+  mutate(passer_player_name = case_when(
+    passer_player_name == "Jos.Allen" ~ "J.Allen", 
+    passer_player_name == "Aa.Rodgers" ~ "A.Rodgers",
+    passer_player_name == "G.Minshew II" ~ "G.Minshew",
+    passer_player_name == "Ty.Taylor" ~ "T.Taylor",
+    T ~ passer_player_name
+  )) %>% 
+  select(passer_player_name, pass_attempt, interception) %>% 
+  group_by(passer_player_name) %>%
+  mutate(id = row_number()) %>%
+  filter(interception == 1) %>% 
+  mutate(dif = id - lag(id), 
+         dif = ifelse(is.na(dif), id, dif))  %>% 
+  filter(passer_player_name %in% c("K.Cousins", "A.Rodgers", "J.Allen", "M.Jones", "T.Tagovailoa", 
+                                   "R.Tannehill", "T.Lawrence",  
+                                   "K.Pickett", "L.Jackson", "J.Burrow", 
+                                   "D.Carr", "P.Mahomes", "J.Herbert", "R.Wilson", 
+                                   "J.Fields", "J.Goff", 
+                                   "M.Stafford", "G.Smith", "B.Purdy", 
+                                   "J.Hurst", "D.Prescott", "D.Jones", 
+                                   "B.Mayfield", "J.Garoppolo")) %>% 
+  left_join(load_espn_qbr(league ="nfl", summary_type = "season") %>%
+             select(name_first, name_last, headshot_href, team_abb) %>% 
+              mutate(id = paste0(substr(name_first,1,1),".",name_last))%>% 
+              select(id, headshot_href, team_abb) %>% 
+              distinct(id, .keep_all = T), 
+            by = c("passer_player_name" = "id"))
+  
+
+
+
+unique(df$team_abb)
+
+load_players()$short_name
+
+df_2 <- df %>% 
+  mutate(team_abb = ifelse(team_abb == "LAR", "LA", team_abb), 
+         team_abb = ifelse(passer_player_name == "A.Rodgers", "NYJ", team_abb), 
+         headshot_href  = ifelse(passer_player_name == "A.Rodgers", "https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/8439.png&w=350&h=254", headshot_href))  %>% 
+  left_join(teams_colors_logos %>%
+              filter(!team_abbr %in% c("OAK", "SD", "LAR", "STL")) %>%
+              select(team_abbr, team_color), 
+              by = c("team_abb" = "team_abbr")) %>% 
+  arrange(passer_player_name)
+
+
+color <- df_2 %>% 
+  select(passer_player_name, team_color)  %>%
+  distinct(passer_player_name, .keep_all = T)
+
+
+
+
+text <- df_2 %>% 
+  select(passer_player_name, team_color)  %>%
+  distinct(passer_player_name)
+library(ggimage)
+library(ggrepel)
+
+
+ggplot(df_2, aes(dif, fill = passer_player_name)) + 
+  geom_histogram(alpha = 0.9, color = "black", bins = 10) + 
+  scale_fill_manual(values = color$team_color) + 
+  geom_vline(xintercept = -20, color = "black") +
+  geom_hline(yintercept = 0, color = "black") + 
+  geom_label_repel(data = df_2 %>% 
+                     group_by(passer_player_name) %>% 
+                     summarise(media = round(mean(dif))),
+            aes(x = 300, y = 10, label = passer_player_name), color = "black", fill = "white") +
+  geom_image(data = df_2 %>% 
+                     group_by(passer_player_name, headshot_href) %>% 
+                     summarise(media = round(mean(dif))),
+                   aes(x = 400, y = 10, image = headshot_href),size = 0.75) +
+  scale_size_identity() + 
+  facet_wrap(~passer_player_name) +
+  theme_bw() + 
+  theme(legend.position = "none", 
+        strip.background = element_blank(), 
+        strip.text.x.top = element_blank(),
+        panel.border = element_blank())
